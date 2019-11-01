@@ -259,6 +259,7 @@ public abstract class GenericAnnotatedTypeFactory<
     @Override
     public void preProcessClassTree(ClassTree classTree) {
         if (this.everUseFlow) {
+            // no caching in data flow
             boolean oldShouldCache = this.shouldCache;
             this.shouldCache = false;
             checkAndPerformFlowAnalysis(classTree);
