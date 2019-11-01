@@ -1345,11 +1345,7 @@ public class AnnotatedTypeFactory implements AnnotationProvider {
 
         AnnotatedTypeMirror result = TypeFromTree.fromExpression(this, tree);
 
-        if (shouldCache && tree.getKind() != Tree.Kind.NEW_CLASS) {
-            // Don't cache types of NEW operator
-            // Cached NEW_CLASS types may contain "Unknowned*" annotations
-            // Such annotations are from previous dataflow analysis
-            // Potential better solution: clear cache after dataflow analysis
+        if (shouldCache) {
             fromExpressionTreeCache.put(tree, result.deepCopy());
         }
         return result;
