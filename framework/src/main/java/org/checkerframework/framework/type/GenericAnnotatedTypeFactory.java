@@ -223,6 +223,10 @@ public abstract class GenericAnnotatedTypeFactory<
             flowResultAnalysisCaches = null;
         }
 
+        // Add common aliases.
+        // addAliasedDeclAnnotation(checkers.nullness.quals.Pure.class,
+        //         Pure.class, AnnotationUtils.fromClass(elements, Pure.class));
+
         // Every subclass must call postInit, but it must be called after
         // all other initialization is finished.
     }
@@ -1582,8 +1586,17 @@ public abstract class GenericAnnotatedTypeFactory<
         if (dependentTypesHelper != null) {
             dependentTypesHelper.viewpointAdaptMethod(tree, method);
         }
-        poly.resolve(tree, method);
+
         return mType;
+    }
+
+    @Override
+    public void methodFromUsePreSubstitution(ExpressionTree tree, AnnotatedTypeMirror mirror) {
+        // no call to super needed since super is no-op
+        super.methodFromUsePreSubstitution(tree, mirror);
+        if (tree instanceof MethodInvocationTree && mirror instanceof AnnotatedExecutableType) {
+            poly.resolve((MethodInvocationTree) tree, (AnnotatedExecutableType) mirror);
+        }
     }
 
     @Override
