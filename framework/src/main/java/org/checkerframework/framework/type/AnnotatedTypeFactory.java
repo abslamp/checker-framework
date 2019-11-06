@@ -1215,7 +1215,7 @@ public class AnnotatedTypeFactory implements AnnotationProvider {
             // Don't cache types of NEW operator
             // Cached NEW_CLASS types may contain "Unknowned*" annotations
             // Such annotations are from previous dataflow analysis
-            // Potential better solution: clear cache after dataflow analysis
+            // TODO: Potential better solution: disable caching in dataflow
             fromExpressionTreeCache.put(tree, result.deepCopy());
         }
         return result;
