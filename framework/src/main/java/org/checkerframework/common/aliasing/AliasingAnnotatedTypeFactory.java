@@ -44,7 +44,7 @@ public class AliasingAnnotatedTypeFactory extends BaseAnnotatedTypeFactory {
     /** Create the type factory. */
     public AliasingAnnotatedTypeFactory(BaseTypeChecker checker) {
         super(checker);
-        if (this.getClass().equals(AliasingAnnotatedTypeFactory.class)) {
+        if (this.getClass() == AliasingAnnotatedTypeFactory.class) {
             this.postInit();
         }
     }
@@ -81,11 +81,6 @@ public class AliasingAnnotatedTypeFactory extends BaseAnnotatedTypeFactory {
     @Override
     protected ListTreeAnnotator createTreeAnnotator() {
         return new ListTreeAnnotator(new AliasingTreeAnnotator(this), super.createTreeAnnotator());
-    }
-
-    @Override
-    protected MultiGraphQualifierHierarchy.MultiGraphFactory createQualifierHierarchyFactory() {
-        return new MultiGraphQualifierHierarchy.MultiGraphFactory(this);
     }
 
     @Override

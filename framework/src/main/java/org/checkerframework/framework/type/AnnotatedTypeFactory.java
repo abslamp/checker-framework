@@ -437,17 +437,22 @@ public class AnnotatedTypeFactory implements AnnotationProvider {
     }
 
     /**
-     * Issue an error and abort if any of the support qualifiers has a @Target meta-annotation that
-     * contain something besides TYPE_USE or TYPE_PARAMETER. (@Target({}) is allowed)
+     * @throws BugInCF If supportedQuals is empty or if any of the support qualifiers has a @Target
+     *     meta-annotation that contain something besides TYPE_USE or TYPE_PARAMETER. (@Target({})
+     *     is allowed.)
      */
     private void checkSupportedQuals() {
+        if (supportedQuals.isEmpty()) {
+            // This is throwing a CF bug, but it could also be a bug in the checker rather than in
+            // the framework itself.
+            throw new BugInCF("Found no supported qualifiers.");
+        }
         for (Class<? extends Annotation> annotationClass : supportedQuals) {
             // Check @Target values
             ElementType[] elements = annotationClass.getAnnotation(Target.class).value();
             List<ElementType> otherElementTypes = new ArrayList<>();
             for (ElementType element : elements) {
-                if (!(element.equals(ElementType.TYPE_USE)
-                        || element.equals(ElementType.TYPE_PARAMETER))) {
+                if (!(element == ElementType.TYPE_USE || element == ElementType.TYPE_PARAMETER)) {
                     // if there's an ElementType with an enumerated value of something other
                     // than TYPE_USE or TYPE_PARAMETER then it isn't a valid qualifier
                     otherElementTypes.add(element);
@@ -530,7 +535,7 @@ public class AnnotatedTypeFactory implements AnnotationProvider {
 
         initializeReflectionResolution();
 
-        if (this.getClass().equals(AnnotatedTypeFactory.class)) {
+        if (this.getClass() == AnnotatedTypeFactory.class) {
             this.parseStubFiles();
         }
     }
@@ -633,6 +638,9 @@ public class AnnotatedTypeFactory implements AnnotationProvider {
      * supportedTypeQualifiers}. The current implementation returns an instance of {@code
      * GraphQualifierHierarchy}.
      *
+     * @param elements the element utilities to use
+     * @param supportedTypeQualifiers the type qualifiers for this type system
+     * @param factory the type factory for this type system
      * @return an annotation relation tree representing the supported qualifiers
      */
     protected static QualifierHierarchy createQualifierHierarchy(
@@ -643,9 +651,6 @@ public class AnnotatedTypeFactory implements AnnotationProvider {
         for (Class<? extends Annotation> typeQualifier : supportedTypeQualifiers) {
             AnnotationMirror typeQualifierAnno =
                     AnnotationBuilder.fromClass(elements, typeQualifier);
-            if (typeQualifierAnno == null) {
-                throw new BugInCF("Cannot load annotation " + typeQualifier);
-            }
             factory.addQualifier(typeQualifierAnno);
             // Polymorphic qualifiers can't declare their supertypes.
             // An error is raised if one is present.
@@ -821,7 +826,7 @@ public class AnnotatedTypeFactory implements AnnotationProvider {
      * @param explicitlyListedAnnotations a varargs array of explicitly listed annotation classes to
      *     be added to the returned set. For example, it is used frequently to add Bottom
      *     qualifiers.
-     * @return a mutable set of the loaded and listed annotation classes.
+     * @return a mutable set of the loaded and listed annotation classes
      */
     @SafeVarargs
     protected final Set<Class<? extends Annotation>> getBundledTypeQualifiers(
@@ -1212,10 +1217,9 @@ public class AnnotatedTypeFactory implements AnnotationProvider {
         AnnotatedTypeMirror result = TypeFromTree.fromExpression(this, tree);
 
         if (shouldCache && tree.getKind() != Tree.Kind.NEW_CLASS) {
-            // Don't cache types of NEW operator
-            // Cached NEW_CLASS types may contain "Unknowned*" annotations
-            // Such annotations are from previous dataflow analysis
-            // TODO: Potential better solution: disable caching in dataflow
+            // Don't cache the type of object creations, because incorrect
+            // annotations would be cached during dataflow analysis.
+            // See Issue #602.
             fromExpressionTreeCache.put(tree, result.deepCopy());
         }
         return result;
@@ -1613,7 +1617,6 @@ public class AnnotatedTypeFactory implements AnnotationProvider {
                 if (path == null) {
                     // The path is null if the field is in a compilation unit we haven't
                     // processed yet. TODO: is there a better way?
-                    // This only arises in the Nullness Checker when substituting rawness.
                     return null;
                 }
                 TypeElement typeElt = ElementUtils.enclosingClass(element);
@@ -1930,19 +1933,6 @@ public class AnnotatedTypeFactory implements AnnotationProvider {
         return mType;
     }
 
-    private boolean shouldBeSubstituted(Element elem) {
-        switch (elem.getKind()) {
-            case PACKAGE:
-            case INSTANCE_INIT:
-            case OTHER:
-            case STATIC_INIT:
-            case TYPE_PARAMETER:
-                return false;
-            default:
-                return true;
-        }
-    }
-
     /**
      * Determines the type of the invoked method based on the passed expression tree, executable
      * element, and receiver type.
@@ -1956,15 +1946,8 @@ public class AnnotatedTypeFactory implements AnnotationProvider {
     public ParameterizedExecutableType methodFromUse(
             ExpressionTree tree, ExecutableElement methodElt, AnnotatedTypeMirror receiverType) {
 
-        AnnotatedTypeMirror memberType = getAnnotatedType(methodElt);
-        if (shouldBeSubstituted(methodElt)) {
-            methodFromUsePreSubstitution(tree, memberType);
-        }
-
-        // memberType may replaced after asMemberOf(). Why poly not affected?
         AnnotatedExecutableType methodType =
-                AnnotatedTypes.asMemberOf(types, this, receiverType, methodElt, memberType);
-
+                AnnotatedTypes.asMemberOf(types, this, receiverType, methodElt);
         List<AnnotatedTypeMirror> typeargs = new ArrayList<>(methodType.getTypeVariables().size());
 
         Map<TypeVariable, AnnotatedTypeMirror> typeVarMapping =
@@ -1994,21 +1977,7 @@ public class AnnotatedTypeFactory implements AnnotationProvider {
             adaptGetClassReturnTypeToReceiver(methodType, receiverType);
         }
 
-        if (!shouldBeSubstituted(methodElt)) {
-            methodFromUsePreSubstitution(tree, memberType);
-        }
         return new ParameterizedExecutableType(methodType, typeargs);
-    }
-
-    /**
-     * An empty slot to be overridden for any potential operation to AnnotatedTypeMirror before type
-     * variable substitution. Default operation is "no operation".
-     *
-     * @param tree an ExpressionTree
-     * @param mirror mirror to be modified
-     */
-    public void methodFromUsePreSubstitution(ExpressionTree tree, AnnotatedTypeMirror mirror) {
-        // no-op in super
     }
 
     /**
@@ -2153,12 +2122,21 @@ public class AnnotatedTypeFactory implements AnnotationProvider {
      * newClassTree has a diamond operator. In that case, the annotations on the type arguments are
      * inferred using the assignment context and contain defaults.
      *
+     * <p>Also, fully annotates the enclosing type of the returned declared type.
+     *
      * <p>(Subclass beside {@link GenericAnnotatedTypeFactory} should not override this method.)
      *
      * @param newClassTree NewClassTree
      * @return AnnotatedDeclaredType
      */
     public AnnotatedDeclaredType fromNewClass(NewClassTree newClassTree) {
+
+        AnnotatedDeclaredType enclosingType;
+        if (newClassTree.getEnclosingExpression() != null) {
+            enclosingType = (AnnotatedDeclaredType) getReceiverType(newClassTree);
+        } else {
+            enclosingType = null;
+        }
         // Diamond trees that are not anonymous classes.
         if (TreeUtils.isDiamondTree(newClassTree) && newClassTree.getClassBody() == null) {
             AnnotatedDeclaredType type =
@@ -2186,6 +2164,7 @@ public class AnnotatedTypeFactory implements AnnotationProvider {
                     (AnnotatedDeclaredType)
                             TypeFromTree.fromTypeTree(this, newClassTree.getIdentifier());
             type.replaceAnnotations(fromTypeTree.getAnnotations());
+            type.setEnclosingType(enclosingType);
             return type;
         } else if (newClassTree.getClassBody() != null) {
             AnnotatedDeclaredType type =
@@ -2196,13 +2175,17 @@ public class AnnotatedTypeFactory implements AnnotationProvider {
             List<? extends AnnotationTree> annos =
                     newClassTree.getClassBody().getModifiers().getAnnotations();
             type.addAnnotations(TreeUtils.annotationsFromTypeAnnotationTrees(annos));
+            type.setEnclosingType(enclosingType);
             return type;
         } else {
             // If newClassTree does not create anonymous class,
             // newClassTree.getIdentifier includes the explicit annotations in this location:
             //   new @HERE Class()
-            return (AnnotatedDeclaredType)
-                    TypeFromTree.fromTypeTree(this, newClassTree.getIdentifier());
+            AnnotatedDeclaredType type =
+                    (AnnotatedDeclaredType)
+                            TypeFromTree.fromTypeTree(this, newClassTree.getIdentifier());
+            type.setEnclosingType(enclosingType);
+            return type;
         }
     }
 
@@ -3095,12 +3078,7 @@ public class AnnotatedTypeFactory implements AnnotationProvider {
 
             // Retrieving annotations from stub files.
             Set<AnnotationMirror> stubAnnos = stubTypes.getDeclAnnotation(elt);
-            if (stubAnnos != null) {
-                results.addAll(stubAnnos);
-            } else {
-                stubAnnos = stubTypes.getDeclAnnotation(elt);
-                results.addAll(stubAnnos);
-            }
+            results.addAll(stubAnnos);
 
             if (elt.getKind() == ElementKind.METHOD) {
                 // Retrieve the annotations from the overridden method's element.
